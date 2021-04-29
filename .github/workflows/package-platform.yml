@@ -1,0 +1,69 @@
+name: Package the Haskell Platform
+
+on:
+  push:
+    tags:
+      - platform-*
+
+jobs:
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - aarch64-linux-gnu
+          # - arm-linux-gnueabihf
+        include:
+          - target: aarch64-linux-gnu
+            dependencies: libc6-dev-arm64-cross
+          # - target: arm-linux-gnueabihf
+          #   dependencies: libc6-dev-armhf-cross
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --assume-yes --no-install-recommends \
+            ${{ matrix.dependencies }} \
+            ca-certificates \
+            curl \
+            g++ \
+            gcc \
+            'gcc-${{ matrix.target }}' \
+            libc6-dev \
+            libncurses-dev \
+            llvm \
+            m4 \
+            make \
+            netbase \
+            patch \
+            qemu-user-binfmt \
+            xz-utils
+          sudo update-binfmts --unimport qemu-aarch64
+          cat <<EOF | sudo tee /usr/local/bin/qemu-aarch64-l > /dev/null
+          #!/bin/sh
+          /usr/bin/qemu-aarch64 -L /usr/aarch64-linux-gnu "\${@}"
+          EOF
+          sudo chmod +x /usr/local/bin/qemu-aarch64-l
+          sudo sed -i 's! /usr/bin/qemu-aarch64$! /usr/local/bin/qemu-aarch64-l!' /usr/share/binfmts/qemu-aarch64
+          sudo update-binfmts --import qemu-aarch64
+      - name: Build
+        run: ./build-platform.sh "${GITHUB_REF#refs/tags/platform-}" '${{ matrix.target }}'
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v2
+        with:
+          path: dist/*
+  release:
+    name: Release
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v2
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifact/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
